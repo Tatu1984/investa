@@ -1,0 +1,54 @@
+# Local development infra for the Investa portal.
+# Requires Docker Desktop (or OrbStack). NeonDB users can skip postgres.
+#
+#   docker compose up -d            # start all
+#   docker compose logs -f postgres # tail one
+#   docker compose down -v          # stop + wipe volumes
+#
+# Connect your .env.local to the local Postgres with:
+#   DATABASE_URL=postgres://investa:investa@localhost:5432/investa?schema=public
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: investa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: investa
+      POSTGRES_USER: investa
+      POSTGRES_PASSWORD: investa
+    ports:
+      - "5432:5432"
+    volumes:
+      - investa_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U investa -d investa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: investa-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - investa_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: investa-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # UI at http://localhost:8025
+
+volumes:
+  investa_pg:
+  investa_redis:

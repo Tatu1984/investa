@@ -1,0 +1,332 @@
+// Prisma 7 schema — URL is provided via prisma.config.ts, not here.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Users & auth ----------
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(USER)
+  emailVerifiedAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  refreshTokens RefreshToken[]
+  resetTokens   PasswordResetToken[]
+  alerts        Alert[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique  // SHA-256 of the opaque token sent in the email
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model SentEmail {
+  id         String   @id @default(cuid())
+  to         String
+  subject    String
+  body       String   @db.Text       // plain-text or HTML
+  provider   String                   // "resend" | "stub"
+  providerId String?                  // the external message id if any
+  status     String                   // "sent" | "failed" | "stub"
+  error      String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("sent_emails")
+}
+
+// ---------- Assets & market data ----------
+
+enum AssetType {
+  equity
+  mf
+  etf
+  index
+  commodity
+  currency
+}
+
+model Asset {
+  id         String    @id @default(cuid())
+  symbol     String    @unique
+  name       String
+  type       AssetType
+  sector     String?
+  industry   String?
+  exchange   String?
+  benchmark  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  prices             AssetPrice[]
+  navs               MfNav[]
+  corporateActions   CorporateAction[]
+  features           FeaturesDaily[]
+  signals            SignalsDaily[]
+
+  @@index([type])
+  @@index([sector])
+  @@map("assets")
+}
+
+// Will become a TimescaleDB hypertable (see 001_hypertable.sql migration)
+model AssetPrice {
+  assetId   String
+  ts        DateTime
+  open      Decimal  @db.Decimal(18, 4)
+  high      Decimal  @db.Decimal(18, 4)
+  low       Decimal  @db.Decimal(18, 4)
+  close     Decimal  @db.Decimal(18, 4)
+  volume    BigInt
+  delivery  BigInt?
+
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, ts])
+  @@map("asset_prices")
+}
+
+model MfNav {
+  assetId String
+  ts      DateTime
+  nav     Decimal  @db.Decimal(18, 4)
+  aum     Decimal? @db.Decimal(20, 2)
+
+  asset   Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, ts])
+  @@map("mf_nav")
+}
+
+enum CorporateActionType {
+  split
+  dividend
+  bonus
+}
+
+model CorporateAction {
+  id             String               @id @default(cuid())
+  assetId        String
+  type           CorporateActionType
+  effectiveDate  DateTime
+  ratio          String?
+  amount         Decimal?             @db.Decimal(18, 4)
+  notes          String?
+  createdAt      DateTime             @default(now())
+
+  asset          Asset                @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId, effectiveDate])
+  @@map("corporate_actions")
+}
+
+model FeaturesDaily {
+  assetId       String
+  date          DateTime @db.Date
+  ret1d         Decimal? @db.Decimal(10, 6)
+  ret1w         Decimal? @db.Decimal(10, 6)
+  ret1m         Decimal? @db.Decimal(10, 6)
+  ret1y         Decimal? @db.Decimal(10, 6)
+  ret3y         Decimal? @db.Decimal(10, 6)
+  sharpe1y      Decimal? @db.Decimal(10, 4)
+  sortino1y     Decimal? @db.Decimal(10, 4)
+  maxDrawdown   Decimal? @db.Decimal(10, 4)
+  vol30d        Decimal? @db.Decimal(10, 4)
+  rsi14         Decimal? @db.Decimal(10, 4)
+  macd          Decimal? @db.Decimal(10, 4)
+  ma20          Decimal? @db.Decimal(18, 4)
+  ma50          Decimal? @db.Decimal(18, 4)
+  ma200         Decimal? @db.Decimal(18, 4)
+  rsVsBench     Decimal? @db.Decimal(10, 4)
+
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, date])
+  @@map("features_daily")
+}
+
+enum Signal {
+  BUY
+  HOLD
+  AVOID
+}
+
+model SignalsDaily {
+  assetId       String
+  date          DateTime @db.Date
+  signal        Signal
+  probability   Int      // 0–100
+  confidence    Decimal  @db.Decimal(4, 3)  // 0.000–1.000
+  rationale     String   @db.Text
+  modelVersion  String
+  createdAt     DateTime @default(now())
+
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, date])
+  @@index([date, signal])
+  @@map("signals_daily")
+}
+
+enum Regime {
+  Bull
+  Bear
+  Sideways
+}
+
+enum RiskState {
+  RISK_ON
+  RISK_OFF
+}
+
+model MarketRegime {
+  date         DateTime @id @db.Date
+  regime       Regime
+  riskState    RiskState
+  confidence   Decimal  @db.Decimal(4, 3)
+  rationale    String   @db.Text
+  createdAt    DateTime @default(now())
+
+  @@map("market_regime")
+}
+
+// ---------- Reports, alerts, audit ----------
+
+enum ReportStatus {
+  draft
+  published
+  failed
+}
+
+model Report {
+  id         String        @id @default(cuid())
+  date       DateTime      @unique @db.Date
+  title      String
+  summary    String        @db.Text
+  sections   Json
+  pdfUrl     String?
+  status     ReportStatus  @default(draft)
+  createdAt  DateTime      @default(now())
+  publishedAt DateTime?
+
+  @@map("reports")
+}
+
+enum AlertType {
+  signal_change
+  risk_flag
+  trend_reversal
+}
+
+enum AlertChannel {
+  in_app
+  email
+  both
+}
+
+model Alert {
+  id         String       @id @default(cuid())
+  userId     String
+  symbol     String
+  type       AlertType
+  threshold  String?
+  channel    AlertChannel @default(in_app)
+  active     Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events     AlertEvent[]
+
+  @@index([userId])
+  @@map("alerts")
+}
+
+model AlertEvent {
+  id         String   @id @default(cuid())
+  alertId    String
+  triggeredAt DateTime @default(now())
+  payload    Json
+
+  alert      Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, triggeredAt])
+  @@map("alert_events")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  meta      Json?
+  ts        DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([ts])
+  @@index([userId])
+  @@map("audit_log")
+}
+
+model IngestLog {
+  id              String   @id @default(cuid())
+  source          String   // "amfi" | "nse" | "yahoo"
+  startedAt       DateTime
+  finishedAt      DateTime
+  durationMs      Int
+  assetsUpserted  Int
+  pricesUpserted  Int
+  errors          String[] @default([])
+  notes           String[] @default([])
+  triggeredBy     String   // "cron" | "admin:<userId>"
+  createdAt       DateTime @default(now())
+
+  @@index([source, createdAt])
+  @@map("ingest_log")
+}

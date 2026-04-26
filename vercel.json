@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/ingest-yahoo",
+      "schedule": "30 12 * * 1-5"
+    },
+    {
+      "path": "/api/cron/ingest-nse",
+      "schedule": "0 14 * * 1-5"
+    },
+    {
+      "path": "/api/cron/ingest-amfi",
+      "schedule": "30 16 * * *"
+    },
+    {
+      "path": "/api/cron/analytics-run",
+      "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron/reports-build",
+      "schedule": "30 17 * * *"
+    },
+    {
+      "path": "/api/cron/alerts-evaluate",
+      "schedule": "45 17 * * *"
+    }
+  ]
+}
