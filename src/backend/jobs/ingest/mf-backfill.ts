@@ -8,12 +8,17 @@ import type { IngestResult } from "./types";
  * Why: AMFI's NAVAll.txt only has today's NAV. The rule engine needs ≥2 points.
  * mfapi.in returns full history per scheme (often 10+ years).
  *
- * Default scope: 500 "Direct Growth" share-class MFs — the ones retail buys via
+ * Resumable contract: see notes in yahoo-backfill.ts — same shape. Each call
+ * uses a wall-clock budget to stay under the Vercel function limit and returns
+ * a cursor the BootstrapPanel uses to continue.
+ *
+ * Default scope: 300 "Direct Growth" share-class MFs — the ones retail buys via
  * Zerodha Coin / Groww. Override with ?limit=N&filter=...
  */
 
-const CHUNK = 6;        // parallel mfapi.in fetches
-const CHUNK_GAP_MS = 400;
+const CHUNK = 8;
+const CHUNK_GAP_MS = 350;
+const DEFAULT_BUDGET_MS = 50_000;
 
 interface MfApiResponse {
   meta?: { scheme_code?: string; scheme_name?: string; fund_house?: string };
@@ -42,57 +47,73 @@ async function fetchMfHistory(schemeCode: string) {
   return out;
 }
 
-export async function backfillMfHistory(opts: { limit?: number; filter?: string } = {}): Promise<IngestResult> {
+export interface MfBackfillResult extends IngestResult {
+  done: boolean;
+  nextCursor: string | null;
+  processed: number;
+  total: number;
+}
+
+export async function backfillMfHistory(opts: {
+  limit?: number;
+  filter?: string;
+  cursor?: string;
+  budgetMs?: number;
+} = {}): Promise<MfBackfillResult> {
   const startedAt = new Date();
   const errors: string[] = [];
   const notes: string[] = [];
 
   let assetsUpserted = 0;
   let pricesUpserted = 0;
+  let succeeded = 0;
+  let processed = 0;
+  let lastSymbol: string | null = null;
 
-  const limit = opts.limit ?? 500;
-  // Default filter: actively-traded retail share class (covers Zerodha / Groww)
+  const limit = opts.limit ?? 300;
   const filter = opts.filter ?? "Direct";
+  const budgetMs = opts.budgetMs ?? DEFAULT_BUDGET_MS;
+  const deadline = startedAt.getTime() + budgetMs;
 
-  // Pull MF assets whose name contains the filter token. SQL LIKE %filter% (case-insensitive).
+  const baseWhere = {
+    type: "mf" as const,
+    name: { contains: filter, mode: "insensitive" as const },
+  };
+
+  const total = await prisma.asset.count({ where: baseWhere });
+
   const mfs = await prisma.asset.findMany({
     where: {
-      type: "mf",
-      name: { contains: filter, mode: "insensitive" },
+      ...baseWhere,
+      ...(opts.cursor ? { symbol: { gt: opts.cursor } } : {}),
     },
     select: { id: true, symbol: true, name: true },
     orderBy: { symbol: "asc" },
     take: limit,
   });
 
-  notes.push(`scanning ${mfs.length} MFs · filter="${filter}" · limit=${limit}`);
-  logger.info({ count: mfs.length, filter, limit }, "mf_backfill_start");
+  notes.push(`scanning ${mfs.length} MFs past cursor=${opts.cursor ?? "<start>"} · filter="${filter}"`);
+  logger.info({ remaining: mfs.length, total, cursor: opts.cursor, filter, limit }, "mf_backfill_start");
 
-  let succeeded = 0;
-  for (let i = 0; i < mfs.length; i += CHUNK) {
+  const since = Date.now() - 366 * 86400 * 1000;
+
+  outer: for (let i = 0; i < mfs.length; i += CHUNK) {
+    if (Date.now() >= deadline) break outer;
     const slice = mfs.slice(i, i + CHUNK);
     await Promise.all(
       slice.map(async (a) => {
         try {
-          // Our symbol is `MF_<schemeCode>` — strip the prefix.
           const code = a.symbol.replace(/^MF_/, "");
           const series = await fetchMfHistory(code);
           if (series.length === 0) return;
-          // mfapi.in returns 10+ years of daily; cap to last 365 days for the rule engine.
-          const since = Date.now() - 366 * 86400 * 1000;
           const recent = series.filter((p) => p.ts.getTime() >= since);
           if (recent.length < 2) return;
-          await Promise.all(
-            recent.map((p) =>
-              prisma.mfNav.upsert({
-                where: { assetId_ts: { assetId: a.id, ts: p.ts } },
-                update: { nav: p.nav },
-                create: { assetId: a.id, ts: p.ts, nav: p.nav },
-              })
-            )
-          );
+          const result = await prisma.mfNav.createMany({
+            data: recent.map((p) => ({ assetId: a.id, ts: p.ts, nav: p.nav })),
+            skipDuplicates: true,
+          });
           assetsUpserted++;
-          pricesUpserted += recent.length;
+          pricesUpserted += result.count;
           succeeded++;
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -100,16 +121,27 @@ export async function backfillMfHistory(opts: { limit?: number; filter?: string 
         }
       })
     );
+    lastSymbol = slice[slice.length - 1]!.symbol;
+    processed += slice.length;
     if (i + CHUNK < mfs.length) await new Promise((r) => setTimeout(r, CHUNK_GAP_MS));
-    if ((i / CHUNK) % 25 === 0 && i > 0) {
-      logger.info({ done: i + CHUNK, total: mfs.length, succeeded }, "mf_backfill_progress");
+    if ((i / CHUNK) % 10 === 0 && i > 0) {
+      logger.info({ done: processed, remaining: mfs.length, succeeded }, "mf_backfill_progress");
     }
   }
 
-  notes.push(`${succeeded} MFs got history, ${mfs.length - succeeded} skipped`);
+  const exhaustedSlice = processed >= mfs.length;
+  const isFinal = exhaustedSlice && (lastSymbol == null
+    ? true
+    : !(await prisma.asset.findFirst({
+        where: { ...baseWhere, symbol: { gt: lastSymbol } },
+        select: { symbol: true },
+      })));
+  const nextCursor = isFinal ? null : (lastSymbol ?? opts.cursor ?? null);
+
+  notes.push(`${succeeded}/${processed} MFs got history this call; ${errors.length} errors`);
 
   const finishedAt = new Date();
-  const result: IngestResult = {
+  const result: MfBackfillResult = {
     source: "amfi",
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
@@ -118,6 +150,10 @@ export async function backfillMfHistory(opts: { limit?: number; filter?: string 
     pricesUpserted,
     errors,
     notes,
+    done: isFinal,
+    nextCursor,
+    processed,
+    total,
   };
   logger.info(result, "mf_backfill_done");
   return result;
