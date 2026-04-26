@@ -39,8 +39,15 @@ const EnvSchema = z.object({
   ANALYTICS_INTERNAL_URL: optionalUrl(),
   ANALYTICS_INTERNAL_KEY: optionalString(z.string().min(16)),
 
-  // Optional third-party
-  ANTHROPIC_API_KEY: optionalString(),
+  // LLM narration providers — first one set (in this priority) wins.
+  // GEMINI_API_KEY is the recommended free path (Google AI Studio, no card).
+  GEMINI_API_KEY: optionalString(),
+  GEMINI_MODEL: optionalString(),  // override; defaults to gemini-2.0-flash
+  GROQ_API_KEY: optionalString(),  // alternative free tier (Llama 3.3 70B)
+  GROQ_MODEL: optionalString(),    // override; defaults to llama-3.3-70b-versatile
+  OPENROUTER_API_KEY: optionalString(),  // free models via OpenRouter (DeepSeek R1, Llama, Gemini)
+  OPENROUTER_MODEL: optionalString(),    // override; defaults to deepseek/deepseek-r1:free
+  ANTHROPIC_API_KEY: optionalString(),  // paid, premium
   LLM_DAILY_BUDGET_USD: z.coerce.number().default(5),
 
   // Cron (Vercel Cron sends Bearer CRON_SECRET automatically)

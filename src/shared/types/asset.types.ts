@@ -3,10 +3,17 @@ export type Signal = "BUY" | "HOLD" | "AVOID";
 export type MarketRegime = "Bull" | "Bear" | "Sideways";
 export type RiskState = "Risk-On" | "Risk-Off";
 
+export type AssetSubType =
+  | "largeCap" | "midCap" | "smallCap"
+  | "largeCapFund" | "midCapFund" | "smallCapFund" | "flexiCap" | "multiCap" | "elss"
+  | "indexFund" | "debtFund" | "liquidFund" | "hybrid"
+  | "gold" | "international" | "sector";
+
 export interface Asset {
   symbol: string;
   name: string;
   type: AssetType;
+  subType?: AssetSubType | null;
   sector?: string;
   industry?: string;
   exchange?: string;

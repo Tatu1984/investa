@@ -40,18 +40,20 @@ export function PlanResult() {
   const months = horizonMonths(horizon);
   const isSip = frequency === "monthly";
 
-  // Type-segmented signal queries — each runs in parallel.
+  // Type-segmented signal queries — each runs in parallel. Each query is keyed
+  // on (risk, horizon) so swapping the PlanBuilder inputs invalidates the cache
+  // and refetches a fresh set of picks tuned to the new profile.
   const stocksBuyQ = useQuery<Asset[]>({
-    queryKey: ["signals", "top", "BUY", "equity"],
-    queryFn: () => assetsApi.top({ type: "BUY", n: 5, assetType: ["equity"] }),
+    queryKey: ["signals", "top", "BUY", "equity", risk, horizon],
+    queryFn: () => assetsApi.top({ type: "BUY", n: 6, assetType: ["equity"], risk, horizon }),
   });
   const mfsBuyQ = useQuery<Asset[]>({
-    queryKey: ["signals", "top", "BUY", "mf"],
-    queryFn: () => assetsApi.top({ type: "BUY", n: 5, assetType: ["mf"] }),
+    queryKey: ["signals", "top", "BUY", "mf", risk, horizon],
+    queryFn: () => assetsApi.top({ type: "BUY", n: 5, assetType: ["mf"], risk, horizon }),
   });
   const avoidsQ = useQuery<Asset[]>({
-    queryKey: ["signals", "top", "AVOID", "all"],
-    queryFn: () => assetsApi.top({ type: "AVOID", n: 4, assetType: ["equity", "mf"] }),
+    queryKey: ["signals", "top", "AVOID", "all", risk],
+    queryFn: () => assetsApi.top({ type: "AVOID", n: 4, assetType: ["equity", "mf"], risk }),
   });
   // Hedge — try GOLDBEES first; fall back to any commodity if not present.
   const hedgeQ = useQuery<Asset | null>({
@@ -180,10 +182,16 @@ export function PlanResult() {
             <Layers className="size-6 text-muted-foreground" />
             <div className="text-sm font-semibold">Universe still ingesting</div>
             <p className="max-w-md text-xs text-muted-foreground">
-              The signal engine needs price history. Once today's NSE bhavcopy + AMFI NAVs are ingested
-              and analytics has run, this page will show real BUY / AVOID picks across stocks and mutual funds.
-              Expected within an hour after the daily 22:30 IST cron.
+              The signal engine needs price history. On a fresh deploy nothing has run yet — kick off the
+              full ingest + analytics pipeline once and this page will show real BUY / AVOID picks across
+              stocks and mutual funds within ~10 minutes.
             </p>
+            <a
+              href="/admin/bootstrap"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            >
+              Run bootstrap
+            </a>
           </CardContent>
         </Card>
       )}

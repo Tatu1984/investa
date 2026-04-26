@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend } from "recharts";
-import { X, Plus, AlertCircle } from "lucide-react";
+import { X, AlertCircle, Layers } from "lucide-react";
 import { Button } from "@/frontend/components/ui/Button";
 import { Card, CardContent } from "@/frontend/components/ui/Card";
 import { Input } from "@/frontend/components/ui/Input";
@@ -18,10 +18,26 @@ const PALETTE = [
 
 type Range = "1M" | "3M" | "6M" | "1Y" | "3Y" | "5Y";
 
+// Groww-style category chips. Empty subTypes = "all" (no filter). Multiple
+// subTypes are OR-ed, so "Stocks" picks any of largeCap/midCap/smallCap.
+type CategoryKey = "all" | "largeCap" | "midCap" | "smallCap" | "stocks" | "mfs" | "gold" | "indexFund" | "debtFund";
+const CATEGORIES: { key: CategoryKey; label: string; subType?: string[]; type?: string[] }[] = [
+  { key: "all", label: "All" },
+  { key: "largeCap", label: "Large-cap stocks", subType: ["largeCap"] },
+  { key: "midCap", label: "Mid-cap stocks", subType: ["midCap"] },
+  { key: "smallCap", label: "Small-cap stocks", subType: ["smallCap"] },
+  { key: "stocks", label: "Stocks (all)", type: ["equity"] },
+  { key: "mfs", label: "Mutual funds", type: ["mf"] },
+  { key: "gold", label: "Gold / hedge", subType: ["gold"] },
+  { key: "indexFund", label: "Index funds", subType: ["indexFund"] },
+  { key: "debtFund", label: "Debt", subType: ["debtFund", "liquidFund"] },
+];
+
 export function CompareView({ initial = ["RELIANCE", "HDFCBANK"] }: { initial?: string[] }) {
   const [symbols, setSymbols] = React.useState<string[]>(initial);
   const [range, setRange] = React.useState<Range>("3M");
   const [q, setQ] = React.useState("");
+  const [category, setCategory] = React.useState<CategoryKey>("all");
 
   const results = useQuery({
     queryKey: ["compare", symbols, range],
@@ -29,10 +45,18 @@ export function CompareView({ initial = ["RELIANCE", "HDFCBANK"] }: { initial?: 
     enabled: symbols.length > 0,
   });
 
+  const activeCat = CATEGORIES.find((c) => c.key === category)!;
+  // When a category is active, the search runs even on an empty query so the
+  // user can browse. Otherwise we wait for ≥2 chars typed.
+  const browseMode = category !== "all";
   const suggestions = useQuery({
-    queryKey: ["assets","search", q],
-    queryFn: () => q ? assetsExtraApi.search(q) : Promise.resolve([]),
-    enabled: q.length >= 2,
+    queryKey: ["assets","search", q, category],
+    queryFn: () => assetsExtraApi.search(q, {
+      subType: activeCat.subType,
+      type: activeCat.type,
+      limit: 12,
+    }),
+    enabled: browseMode || q.length >= 2,
   });
 
   const add = (s: string) => {
@@ -62,6 +86,24 @@ export function CompareView({ initial = ["RELIANCE", "HDFCBANK"] }: { initial?: 
     <div className="space-y-6">
       <Card>
         <CardContent className="p-5">
+          {/* Category chips */}
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.key}
+                onClick={() => setCategory(c.key)}
+                className={
+                  "rounded-full border px-3 py-1 text-[11px] transition-colors " +
+                  (category === c.key
+                    ? "border-accent bg-accent/15 text-foreground"
+                    : "border-border bg-card text-muted-foreground hover:bg-muted")
+                }
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             {symbols.map((sym, i) => (
               <span key={sym} className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-sm">
@@ -73,15 +115,22 @@ export function CompareView({ initial = ["RELIANCE", "HDFCBANK"] }: { initial?: 
 
             {symbols.length < 5 && (
               <div className="relative">
-                <Input placeholder="Add asset…" className="w-48" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => {
-                  if (e.key === "Enter") { e.preventDefault(); add(q); }
-                }} />
-                {q.length >= 2 && (suggestions.data ?? []).length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-auto rounded-md border border-border bg-popover shadow-md">
-                    {(suggestions.data ?? []).slice(0, 8).map((s) => (
+                <Input
+                  placeholder={browseMode ? `Browse ${activeCat.label.toLowerCase()}…` : "Add asset…"}
+                  className="w-56"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); add(q); }
+                  }}
+                />
+                {((browseMode && (suggestions.data ?? []).length > 0) || (q.length >= 2 && (suggestions.data ?? []).length > 0)) && (
+                  <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-auto rounded-md border border-border bg-popover shadow-md">
+                    {(suggestions.data ?? []).slice(0, 12).map((s) => (
                       <button key={s.symbol} onClick={() => add(s.symbol)} className="block w-full px-3 py-1.5 text-left text-xs hover:bg-muted">
                         <span className="font-mono font-medium">{s.symbol}</span>
                         <span className="ml-2 text-muted-foreground">{s.name}</span>
+                        {s.subType && <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[9px] uppercase tracking-wider">{s.subType}</span>}
                       </button>
                     ))}
                   </div>
@@ -102,13 +151,24 @@ export function CompareView({ initial = ["RELIANCE", "HDFCBANK"] }: { initial?: 
             {results.isLoading ? (
               <div className="h-full shimmer rounded-lg" />
             ) : results.error ? (
-              <div className="flex h-full flex-col items-center justify-center gap-1 text-sm">
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-sm">
                 <AlertCircle className="size-5 text-[color-mix(in_oklab,var(--destructive)_75%,var(--foreground))]" />
                 Couldn't load comparison.
               </div>
             ) : !hasAnyPoints ? (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                No price history for the selected assets in {range}. Try a longer window, or a symbol with more history (e.g. NIFTY50).
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+                <Layers className="size-5" />
+                <div>No price history yet for these assets.</div>
+                <p className="max-w-md text-xs">
+                  This usually means the database hasn&apos;t been bootstrapped yet, or the selected window is shorter than the
+                  available history. Run the full ingest pipeline once to load 1Y of data.
+                </p>
+                <a
+                  href="/admin/bootstrap"
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                >
+                  Run bootstrap
+                </a>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">

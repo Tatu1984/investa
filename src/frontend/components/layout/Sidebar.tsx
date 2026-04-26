@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, LineChart, GitCompareArrows, Radar, FileText, Bell, Settings, Sparkles, Wand2, ArrowRight } from "lucide-react";
+import { LayoutDashboard, LineChart, GitCompareArrows, Radar, FileText, Bell, Settings, Sparkles, Wand2, ArrowRight, Wrench } from "lucide-react";
 import { cn } from "@/frontend/utils/cn";
 
 const primary = { href: "/for-you", label: "For you", icon: Wand2 };
@@ -14,6 +14,7 @@ const nav = [
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/admin/bootstrap", label: "Bootstrap", icon: Wrench },
 ];
 
 export function Sidebar() {

@@ -96,6 +96,10 @@ model Asset {
   symbol     String    @unique
   name       String
   type       AssetType
+  // Sub-classification for category-aware filtering. Equities: largeCap | midCap | smallCap.
+  // Mutual funds: largeCapFund | midCapFund | smallCapFund | flexiCap | multiCap | elss |
+  // indexFund | debtFund | liquidFund | hybrid | gold | international | sector. Null when unknown.
+  subType    String?
   sector     String?
   industry   String?
   exchange   String?
@@ -111,6 +115,7 @@ model Asset {
 
   @@index([type])
   @@index([sector])
+  @@index([subType])
   @@map("assets")
 }
 

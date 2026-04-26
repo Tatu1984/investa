@@ -29,11 +29,11 @@ export const assetsExtraApi = {
       )
       .then((r) => r.data.data),
 
-  search: (q: string) =>
+  search: (q: string, opts: { subType?: string[]; type?: string[]; limit?: number } = {}) =>
     api
-      .get<{ data: { id: string; symbol: string; name: string; type: string; sector: string | null; exchange: string | null }[] }>(
+      .get<{ data: { id: string; symbol: string; name: string; type: string; subType: string | null; sector: string | null; exchange: string | null }[] }>(
         "/assets/search",
-        { params: { q } }
+        { params: { q, ...opts } }
       )
       .then((r) => r.data.data),
 

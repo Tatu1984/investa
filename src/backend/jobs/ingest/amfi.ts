@@ -1,5 +1,6 @@
 import { prisma } from "@/backend/database/client";
 import { logger } from "@/backend/utils/logger.util";
+import { classifyMf } from "@/backend/services/classifier.service";
 import { IngestError, type IngestResult } from "./types";
 
 const AMFI_URL = "https://www.amfiindia.com/spages/NAVAll.txt";
@@ -98,10 +99,14 @@ export async function ingestAmfi(opts: { limit?: number } = {}): Promise<IngestR
       const slice = rows.slice(i, i + CHUNK);
       // 1. Upsert assets first (we need asset.id to insert NAV)
       const assetResults = await Promise.all(
-        slice.map((r) =>
-          prisma.asset.upsert({
+        slice.map((r) => {
+          const subType = classifyMf(r.schemeName, r.category);
+          return prisma.asset.upsert({
             where: { symbol: `MF_${r.schemeCode}` },
-            update: { name: r.schemeName, sector: r.category, industry: r.amc, exchange: "AMFI" },
+            update: {
+              name: r.schemeName, sector: r.category, industry: r.amc, exchange: "AMFI",
+              ...(subType ? { subType } : {}),
+            },
             create: {
               symbol: `MF_${r.schemeCode}`,
               name: r.schemeName,
@@ -109,10 +114,11 @@ export async function ingestAmfi(opts: { limit?: number } = {}): Promise<IngestR
               sector: r.category,
               industry: r.amc,
               exchange: "AMFI",
+              ...(subType ? { subType } : {}),
             },
             select: { id: true, symbol: true },
-          })
-        )
+          });
+        })
       );
       assetsUpserted += assetResults.length;
 

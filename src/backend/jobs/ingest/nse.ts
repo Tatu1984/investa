@@ -1,5 +1,6 @@
 import { prisma } from "@/backend/database/client";
 import { logger } from "@/backend/utils/logger.util";
+import { classifyEquity } from "@/backend/services/classifier.service";
 import { IngestError, type IngestResult } from "./types";
 
 /**
@@ -110,14 +111,18 @@ export async function ingestNse(opts: { limit?: number } = {}): Promise<IngestRe
     for (let i = 0; i < rows.length; i += CHUNK) {
       const slice = rows.slice(i, i + CHUNK);
       const assetResults = await Promise.all(
-        slice.map((r) =>
-          prisma.asset.upsert({
+        slice.map((r) => {
+          const subType = classifyEquity(r.symbol);
+          return prisma.asset.upsert({
             where: { symbol: r.symbol },
-            update: { exchange: "NSE" },
-            create: { symbol: r.symbol, name: r.symbol, type: "equity", exchange: "NSE" },
+            update: { exchange: "NSE", ...(subType ? { subType } : {}) },
+            create: {
+              symbol: r.symbol, name: r.symbol, type: "equity", exchange: "NSE",
+              ...(subType ? { subType } : {}),
+            },
             select: { id: true, symbol: true },
-          })
-        )
+          });
+        })
       );
       assetsUpserted += assetResults.length;
 
