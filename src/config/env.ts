@@ -3,10 +3,17 @@
 // are only consumed by code that is itself server-only (middleware, jwt util).
 import { z } from "zod";
 
-// Treat empty strings as "unset" for optional vars — common .env footgun in Zod 4.
-const emptyToUndef = (v: unknown) => (typeof v === "string" && v === "" ? undefined : v);
-const optionalString = (inner: z.ZodString = z.string()) => z.preprocess(emptyToUndef, inner.optional());
-const optionalUrl = () => z.preprocess(emptyToUndef, z.string().url().optional());
+// Trim and treat blank strings as "unset" for optional vars.
+// Vercel's env-var UI sometimes preserves trailing whitespace from a paste; if a
+// user accidentally pastes `re_xxx ` (note the space) we want it to behave the
+// same as `re_xxx` rather than silently mismatch downstream.
+const cleanString = (v: unknown) => {
+  if (typeof v !== "string") return v;
+  const t = v.trim();
+  return t === "" ? undefined : t;
+};
+const optionalString = (inner: z.ZodString = z.string()) => z.preprocess(cleanString, inner.optional());
+const optionalUrl = () => z.preprocess(cleanString, z.string().url().optional());
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
